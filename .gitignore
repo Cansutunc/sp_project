@@ -1,0 +1,93 @@
+# --- Python bytecode / build ---
+__pycache__/
+*.py[cod]
+*.so
+.build/
+build/
+dist/
+*.egg-info/
+.eggs/
+*.manifest
+*.spec
+
+# --- Environments ---
+.env
+.env.*
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+coverage.xml
+.coverage*
+htmlcov/
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- IDE / Editor ---
+.vscode/
+*.code-workspace
+.idea/
+*.iml
+
+# --- Notebooks / Caches ---
+.ipynb_checkpoints/
+.cache/
+**/.ipynb_checkpoints/
+
+# --- Training outputs / artifacts ---
+checkpoints/
+results/
+runs/              # tensorboard
+logs/
+sp_vis/            # your superpixel snapshots
+outputs/
+
+# keep placeholders/docs if present
+!checkpoints/.gitkeep
+!results/.gitkeep
+!runs/.gitkeep
+!logs/.gitkeep
+!sp_vis/.gitkeep
+!outputs/.gitkeep
+!checkpoints/README.md
+!results/README.md
+!logs/README.md
+!sp_vis/README.md
+!outputs/README.md
+
+# --- Data (raw & processed) ---
+data/
+datasets/
+images/
+!data/.gitkeep
+!data/README.md
+!datasets/.gitkeep
+!datasets/README.md
+!images/.gitkeep
+!images/README.md
+
+# --- Model weights (use Git LFS if you must track) ---
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# If you want to allow tiny reference weights, comment the lines above
+# and instead ignore only in common dirs:
+# checkpoints/**/*.pt
+# checkpoints/**/*.pth
+# weights/**/*.pt
+# weights/**/*.pth
+
+# --- HuggingFace / torch caches (optional) ---
+.huggingface/
+~/.cache/
+.torch/

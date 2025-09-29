@@ -7,7 +7,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from PIL import Image
 
-from data_utils import ImagesFolder, CocoStuffUnsupervised 
+from data_utils import ImagesFolder 
 from segment import EdgeAwareSPModule, get_spixel_prob, sp_soft_pool_avg, sp_project
 from losses_sp import MutualInfoLoss, SmoothnessLoss, EdgeAwareKLLoss
 from gnn_modularity import TinyGAT, ClusterHead, soft_adjacency, modularity_loss
@@ -28,10 +28,10 @@ def main(args):
     # --- Data Loading ---
     if args.dataset == 'cocostuff':
         print(f"Loading COCO-Stuff dataset, using {args.subset_fraction*100:.1f}% of the data.")
-        # NOTE: Update the paths to your COCO dataset location
-        train_dataset = CocoStuffUnsupervised(root='./coco/train2017', annFile='./coco/annotations/instances_train2017.json', size=tuple(args.size), subset_fraction=args.subset_fraction)
-        val_dataset = CocoStuffUnsupervised(root='./coco/val2017', annFile='./coco/annotations/instances_val2017.json', size=tuple(args.size), subset_fraction=args.subset_fraction)
-        
+        # Point ImagesFolder directly to the image directories
+        train_dataset = ImagesFolder(root='./coco/train2017', size=tuple(args.size), subset_fraction=args.subset_fraction)
+        val_dataset = ImagesFolder(root='./coco/val2017', size=tuple(args.size), subset_fraction=args.subset_fraction)
+
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0, drop_last=True)
     else: # Your custom dataset

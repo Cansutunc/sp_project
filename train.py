@@ -57,7 +57,7 @@ def main(args):
     head = ClusterHead(in_dim=128, n_clusters=args.C).to(device)
 
     optimizer = optim.AdamW(list(spcnn.parameters()) + list(gat.parameters()) + list(head.parameters()), lr=args.lr)
-    scheduler = ReduceLROnPlateau(optimizer, 'min', patience=args.patience // 2, verbose=True)
+    scheduler = ReduceLROnPlateau(optimizer, 'min', patience=args.patience // 2)
     
     # --- Checkpoints, Logging, and Early Stopping ---
     os.makedirs(args.checkpoint_dir, exist_ok=True)

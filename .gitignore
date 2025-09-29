@@ -64,7 +64,7 @@ outputs/
 !outputs/README.md
 
 # --- Data (raw & processed) ---
-data/
+data/** 
 datasets/
 images/
 !data/.gitkeep

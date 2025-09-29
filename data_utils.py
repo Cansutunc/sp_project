@@ -10,7 +10,8 @@ class ImagesFolder(Dataset):
     def __init__(self, root: str, size: Optional[Tuple[int,int]] = None, subset_fraction=1.0):
         self.files=[]
         for ext in ('*.jpg','*.jpeg','*.png','*.bmp'):
-            self.files+=glob.glob(os.path.join(root,ext))
+            # NEW corrected line
+            self.files+=glob.glob(os.path.join(root, '**', ext), recursive=True)
         
         self.files.sort()
         self.size=size

@@ -7,7 +7,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from PIL import Image
 
-from data_utils import ImagesFolder 
+from data_utils import ImagesFolder
 from segment import EdgeAwareSPModule, get_spixel_prob, sp_soft_pool_avg, sp_project
 from losses_sp import MutualInfoLoss, SmoothnessLoss, EdgeAwareKLLoss
 from gnn_modularity import TinyGAT, ClusterHead, soft_adjacency, modularity_loss
@@ -18,20 +18,17 @@ def visualize_superpixels(image_tensor, p_map, out_path):
     seg = p_map.argmax(dim=1)[0].cpu().numpy()
     
     from skimage.segmentation import mark_boundaries
-    boundary_img = mark_boundaries(np.array(image_pil), seg) 
+    boundary_img = mark_boundaries(np.array(image_pil), seg)
     
     plt.imsave(out_path, boundary_img)
 
 def main(args):
     device = args.device if torch.cuda.is_available() and args.device.startswith('cuda') else 'cpu'
 
-    # --- Data Loading ---
     if args.dataset == 'cocostuff':
         print(f"Loading COCO-Stuff dataset, using {args.subset_fraction*100:.1f}% of the data.")
-        # Point ImagesFolder directly to the image directories
         train_dataset = ImagesFolder(root='./coco/train2017', size=tuple(args.size), subset_fraction=args.subset_fraction)
         val_dataset = ImagesFolder(root='./coco/val2017', size=tuple(args.size), subset_fraction=args.subset_fraction)
-
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0, drop_last=True)
     else: # Your custom dataset
@@ -48,8 +45,7 @@ def main(args):
         train_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=train_sampler, num_workers=0, drop_last=True)
         val_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=val_sampler, num_workers=0, drop_last=True)
 
-
-    # --- Model, Losses, and Optimizer ---
+    # Model, Losses, and Optimizer 
     spcnn = EdgeAwareSPModule(in_c=3, num_feat=32, num_layers=4, num_spixels=args.K, add_recon=False).to(device)
     mi, sm, ed = MutualInfoLoss(2.0), SmoothnessLoss(10.0), EdgeAwareKLLoss()
     Cf = 32 * (2**(4 - 1))
@@ -59,10 +55,14 @@ def main(args):
     optimizer = optim.AdamW(list(spcnn.parameters()) + list(gat.parameters()) + list(head.parameters()), lr=args.lr)
     scheduler = ReduceLROnPlateau(optimizer, 'min', patience=args.patience // 2)
     
-    # --- Checkpoints, Logging, and Early Stopping ---
+    # Checkpoints, Logging, and Early Stopping 
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     os.makedirs(args.vis_dir, exist_ok=True)
-    history = {'train_loss': [], 'val_loss': []}
+    
+    # MODIFICATION: Added new keys to history dictionary
+    history = {'train_loss': [], 'val_loss': [], 
+               'val_loss_sp': [], 'val_loss_mod': []}
+               
     best_val_loss = float('inf')
     epochs_no_improve = 0
 
@@ -100,7 +100,12 @@ def main(args):
 
         # --- Validation Phase ---
         spcnn.eval(); gat.eval(); head.eval()
+        
+        # MODIFICATION: Initialized accumulators for component losses
         val_loss = 0.0
+        val_loss_sp = 0.0
+        val_loss_mod = 0.0
+
         with torch.no_grad():
             for i, (x, _) in enumerate(tqdm(val_loader, ncols=80, desc=f'Epoch {epoch} [Val]')):
                 x = x.to(device)
@@ -120,11 +125,22 @@ def main(args):
                 loss = L_sp + args.gamma * L_mod
                 val_loss += loss.item()
                 
+                # MODIFICATION: Accumulate component losses
+                val_loss_sp += L_sp.item()
+                val_loss_mod += L_mod.item()
+                
                 if i == 0 and epoch % args.vis_interval == 0:
                     visualize_superpixels(x[0], P[0].unsqueeze(0), os.path.join(args.vis_dir, f"epoch_{epoch}_val_sp.png"))
-
+        
+        # MODIFICATION: Calculate and save average component losses
         avg_val_loss = val_loss / len(val_loader)
         history['val_loss'].append(avg_val_loss)
+
+        avg_val_sp = val_loss_sp / len(val_loader)
+        avg_val_mod = val_loss_mod / len(val_loader)
+        history['val_loss_sp'].append(avg_val_sp)
+        history['val_loss_mod'].append(avg_val_mod)
+        
         print(f'[Epoch {epoch}] Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}')
 
         # --- Checkpointing and Early Stopping ---
@@ -142,15 +158,29 @@ def main(args):
         
         scheduler.step(avg_val_loss)
 
-    # --- Plotting and Saving Results ---
-    plt.figure()
-    plt.plot(history['train_loss'], label='Train Loss')
-    plt.plot(history['val_loss'], label='Validation Loss')
-    plt.title('Training and Validation Loss')
+    # --- MODIFICATION: Enhanced Plotting and Saving Results ---
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(history['train_loss'], label='Total Train Loss')
+    plt.plot(history['val_loss'], label='Total Validation Loss')
+    plt.title('Total Loss Over Epochs')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
-    plt.savefig('loss_curve.png')
+    plt.grid(True)
+
+    plt.subplot(1, 2, 2)
+    plt.plot(history['val_loss_sp'], label='Superpixel Loss (L_sp)')
+    plt.plot(history['val_loss_mod'], label='Modularity Loss (L_mod)')
+    plt.title('Validation Loss Components')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig('loss_curves_detailed.png')
+    print("Saved detailed loss curves to loss_curves_detailed.png")
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()

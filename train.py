@@ -18,7 +18,7 @@ def visualize_superpixels(image_tensor, p_map, out_path):
     seg = p_map.argmax(dim=1)[0].cpu().numpy()
     
     from skimage.segmentation import mark_boundaries
-    boundary_img = mark_boundaries(image_pil, seg)
+    boundary_img = mark_boundaries(np.array(image_pil), seg) 
     
     plt.imsave(out_path, boundary_img)
 

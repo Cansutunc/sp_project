@@ -29,9 +29,23 @@ def visualize_superpixels(image_tensor, p_map, out_path):
     
     plt.imsave(out_path, boundary_img)
 
+def create_coord_grid(x, scale=0.5): 
+    B, _, H, W = x.shape
+    device = x.device
+    
+    yy, xx = torch.meshgrid(torch.arange(H, device=device), torch.arange(W, device=device), indexing='ij')
+    
+    # Koordinatları [-scale, scale] aralığına normalleştir
+    coords = torch.stack([
+        ((xx.float() / (W - 1)) * 2 - 1) * scale, # <-- scale ile çarptık
+        ((yy.float() / (H - 1)) * 2 - 1) * scale  # <-- scale ile çarptık
+    ], dim=0).unsqueeze(0).repeat(B, 1, 1, 1)
+    
+    return coords
+
 def main(args):
     device = args.device if torch.cuda.is_available() and args.device.startswith('cuda') else 'cpu'
-
+    
     # --- Veri Yükleme ---
     if args.dataset == 'cocostuff':
         print(f"Loading COCO-Stuff dataset, using {args.subset_fraction*100:.1f}% of the data.")
@@ -53,14 +67,41 @@ def main(args):
         train_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=train_sampler, num_workers=2, drop_last=True)
         val_loader = DataLoader(dataset, batch_size=args.batch_size, sampler=val_sampler, num_workers=2, drop_last=True)
 
-    # --- Model, Kayıp Fonksiyonları ve Optimizatör ---
-    spcnn = EdgeAwareSPModule(in_c=3, num_feat=32, num_layers=4, num_spixels=args.K, add_recon=False).to(device)
+    # Model,Loss functions and optimizer 
+    spcnn = EdgeAwareSPModule(in_c=5, num_feat=32, num_layers=4, num_spixels=args.K, add_recon=False).to(device)
+
     mi, sm, ed = MutualInfoLoss(2.0), SmoothnessLoss(10.0), EdgeAwareKLLoss()
     Cf = 32 * (2**(4 - 1))
     gat = TinyGAT(in_dim=Cf, hid_dim=128, out_dim=128, heads=4).to(device)
     head = ClusterHead(in_dim=128, n_clusters=args.C).to(device)
+    # Eğer sadece GNN eğitilecekse, en iyi spcnn ağırlıklarını yükle ve dondur
+    if args.train_gnn_only:
+        print("--- Loading best spcnn weights and freezing it. ---")
+        best_ckpt_path = os.path.join(args.checkpoint_dir, 'best.pt')
+        if os.path.exists(best_ckpt_path):
+            checkpoint = torch.load(best_ckpt_path, map_location=device)
+            spcnn.load_state_dict(checkpoint['spcnn'])
+            print("Best spcnn weights loaded.")
+        else:
+            print("WARNING: best.pt not found. GNN will be trained with random spcnn weights.")
+        
+        # spcnn'in gradyanlarını kapat
+        for param in spcnn.parameters():
+            param.requires_grad = False
+    # spcnn parametreleri için bir grup
+    params_spcnn = {
+        'params': spcnn.parameters(),
+        'lr': args.lr_spcnn 
+    }
 
-    optimizer = optim.AdamW(list(spcnn.parameters()) + list(gat.parameters()) + list(head.parameters()), lr=args.lr)
+    # gat ve head (GNN) parametreleri için ayrı bir grup
+    params_gnn = {
+        'params': list(gat.parameters()) + list(head.parameters()),
+        'lr': args.lr_gnn
+    }
+
+    optimizer = optim.AdamW([params_spcnn, params_gnn])
+    # optimizer = optim.AdamW(list(spcnn.parameters()) + list(gat.parameters()) + list(head.parameters()), lr=args.lr)
     scheduler = ReduceLROnPlateau(optimizer, 'min', patience=args.patience // 2)
     
     # --- Checkpoint, Loglama ve Erken Durdurma Ayarları ---
@@ -96,7 +137,7 @@ def main(args):
             best_val_loss = checkpoint['best_val_loss']
         print(f"Resumed successfully. Starting from epoch {start_epoch}.")
 
-    # --- Ana Eğitim Döngüsü ---
+    # Train loop
     for epoch in range(start_epoch, args.epochs + 1):
         # --- Eğitim Aşaması ---
         spcnn.train(); gat.train(); head.train()
@@ -104,17 +145,22 @@ def main(args):
         for x, _ in tqdm(train_loader, ncols=80, desc=f'Epoch {epoch} [Train]'):
             x = x.to(device)
             optimizer.zero_grad(set_to_none=True)
-
-            outs = spcnn(x, get_spixel_prob); P, Fmap = outs['P'], outs['feat']
+            # Adding coordinate channels
+            coords = create_coord_grid(x)
+            x_with_coords = torch.cat([x, coords], dim=1)
+            outs = spcnn(x_with_coords, get_spixel_prob)
+            P, Fmap = outs['P'], outs['feat']
             Zrgb = sp_soft_pool_avg(x, P); Ihat = sp_project(Zrgb, P)
+
+            # L_sp'yi ağırlıklarla yeniden hesaplayın
             L_sp = mi(P) + sm(P, x) + ed(x, Ihat)
-            
+
             Z = sp_soft_pool_avg(Fmap, P); A_soft = soft_adjacency(Z, tau=0.5)
             
-            A_bin = (A_soft > (A_soft.mean(dim=(-1,-2), keepdim=True))).float()
+            #A_bin = (A_soft > (A_soft.mean(dim=(-1,-2), keepdim=True))).float()
             
             H = gat(Z, A_soft); Y = head(H)
-            L_mod = modularity_loss(A_bin, Y)
+            L_mod = modularity_loss(A_soft, Y)
             
             loss = L_sp + args.gamma * L_mod
             loss.backward(); optimizer.step()
@@ -126,17 +172,20 @@ def main(args):
         history['train_loss_sp'].append(train_loss_sp / len(train_loader))
         history['train_loss_mod'].append(train_loss_mod / len(train_loader))
 
-        # --- Doğrulama Aşaması ---
+        # Validation 
         spcnn.eval(); gat.eval(); head.eval()
         val_loss, val_loss_sp, val_loss_mod = 0.0, 0.0, 0.0
         with torch.no_grad():
             for i, (x, _) in enumerate(tqdm(val_loader, ncols=80, desc=f'Epoch {epoch} [Val]')):
                 x = x.to(device)
-                
-                outs = spcnn(x, get_spixel_prob); P, Fmap = outs['P'], outs['feat']
+                # addin g coordinate channels
+                coords = create_coord_grid(x)
+                x_with_coords = torch.cat([x, coords], dim=1)
+                outs = spcnn(x_with_coords, get_spixel_prob)
+                P, Fmap = outs['P'], outs['feat']
                 Zrgb = sp_soft_pool_avg(x, P); Ihat = sp_project(Zrgb, P)
-                L_sp = mi(P) + sm(P, x) + ed(x, Ihat)
-                
+                # Recompute L_sp with weights
+                L_sp = mi(P) + sm(P, x) + ed(x, Ihat)                
                 Z = sp_soft_pool_avg(Fmap, P); A_soft = soft_adjacency(Z, tau=0.5)
                 A_bin = (A_soft > (A_soft.mean(dim=(-1,-2), keepdim=True))).float()
                 
@@ -185,9 +234,9 @@ def main(args):
         
         scheduler.step(avg_val_loss)
 
-        # --- Periyodik mIoU Değerlendirmesi ---
+        #  Periyodik mIoU Değerlendirmesi 
         if epoch % 5 == 0:
-            # ... (code to save temp checkpoint is the same) ...
+            # (code to save temp checkpoint is the same) 
             temp_ckpt_path = os.path.join(args.checkpoint_dir, 'temp_eval.pt')
             # The command now explicitly uses the same python as the training script
             command = [
@@ -235,6 +284,8 @@ if __name__ == '__main__':
     ap.add_argument('--size', type=int, nargs=2, default=[320, 320])
     ap.add_argument('--epochs', type=int, default=50)
     ap.add_argument('--batch_size', type=int, default=2)
+    ap.add_argument('--lr_spcnn', type=float, default=1e-5, help="Learning rate for SPCNN module.")
+    ap.add_argument('--lr_gnn', type=float, default=5e-4, help="Learning rate for GNN module (gat + head).")
     ap.add_argument('--lr', type=float, default=1e-4)
     ap.add_argument('--K', type=int, default=200)
     ap.add_argument('--C', type=int, default=6)
@@ -245,5 +296,6 @@ if __name__ == '__main__':
     ap.add_argument('--checkpoint_dir', type=str, default='./checkpoints_final')
     ap.add_argument('--vis_dir', type=str, default='./visualizations_final')
     ap.add_argument('--vis_interval', type=int, default=1)
+    ap.add_argument('--train_gnn_only', action='store_true', help="If set, only train the GNN part, keeping spcnn fixed.")
     args = ap.parse_args()
     main(args)

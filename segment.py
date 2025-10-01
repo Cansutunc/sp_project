@@ -17,7 +17,7 @@ def _conv_in(in_c, out_c, k=3, pad=True, relu=True):
     return nn.Sequential(*layers)
 
 class EdgeAwareSPModule(nn.Module):
-    def __init__(self, in_c=3, num_feat=32, num_layers=4, num_spixels=200, add_recon=False):
+    def __init__(self, in_c=5, num_feat=32, num_layers=4, num_spixels=200, add_recon=False):
         super().__init__()
         self.add_recon=add_recon
         feats=[]; c=in_c

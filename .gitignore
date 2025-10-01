@@ -73,6 +73,8 @@ images/
 !datasets/README.md
 !images/.gitkeep
 !images/README.md
+coco/** 
+visualizations_final/** 
 
 # --- Model weights (use Git LFS if you must track) ---
 *.pt

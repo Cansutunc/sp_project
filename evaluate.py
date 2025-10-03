@@ -10,7 +10,7 @@ from scipy.optimize import linear_sum_assignment
 
 from data_utils import CocoStuffSupervised
 from segment import EdgeAwareSPModule, get_spixel_prob, sp_soft_pool_avg
-from gnn_modularity import TinyGAT, ClusterHead, soft_adjacency
+from gnn_loss import TinyGAT, ClusterHead, soft_adjacency
 
 def calculate_miou(pred_mask, gt_mask, num_classes):
     intersection = np.zeros(num_classes)
@@ -50,7 +50,7 @@ def main(args):
     
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
     
-    spcnn = EdgeAwareSPModule(3, 32, 4, args.K, False).to(device)
+    spcnn = EdgeAwareSPModule(5, 32, 4, args.K, False).to(device)
     gat = TinyGAT(in_dim=32 * (2**(4 - 1)), hid_dim=128, out_dim=128, heads=4).to(device)
     head = ClusterHead(in_dim=128, n_clusters=args.C).to(device)
 

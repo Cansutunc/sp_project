@@ -7,25 +7,37 @@ from torch.utils.data import Dataset, Subset
 import torchvision.transforms as transforms
 from torchvision.datasets import VisionDataset
 from pycocotools.coco import COCO
+import random
 
 class ImagesFolder(Dataset):
-    def __init__(self, root: str, size: Optional[Tuple[int,int]] = None):
-        self.files=[]
-        # --- THIS IS THE MODIFIED PART ---
-        # It now searches recursively through all subfolders for images
-        for ext in ('*.jpg','*.jpeg','*.png','*.bmp'):
+    def __init__(self, root: str, size: Optional[Tuple[int,int]] = None, subset_fraction: float = 1.0):
+        self.files = []
+        # Search recursively through all subfolders for images
+        for ext in ('*.jpg', '*.jpeg', '*.png', '*.bmp'):
             self.files += glob.glob(os.path.join(root, '**', ext), recursive=True)
-        self.files.sort(); self.size=size
+        
+        self.files.sort()
+        
+        # Apply subset_fraction
+        if subset_fraction < 1.0:
+            n_samples = int(len(self.files) * subset_fraction)
+            # Use random sampling with fixed seed for reproducibility
+            import random
+            random.seed(42)
+            self.files = random.sample(self.files, n_samples)
+            self.files.sort()  # Re-sort after sampling
+        
+        self.size = size
         
     def __len__(self): 
         return len(self.files)
         
     def __getitem__(self, idx):
-        path=self.files[idx]
-        img=Image.open(path).convert('RGB')
+        path = self.files[idx]
+        img = Image.open(path).convert('RGB')
         if self.size is not None: 
-            img=img.resize((self.size[1], self.size[0]), Image.BILINEAR)
-        x=torch.from_numpy((np.array(img).astype('float32')/255.).transpose(2,0,1))
+            img = img.resize((self.size[1], self.size[0]), Image.BILINEAR)
+        x = torch.from_numpy((np.array(img).astype('float32')/255.).transpose(2,0,1))
         return x, os.path.basename(path)
 
 class CocoStuffSupervised(VisionDataset):

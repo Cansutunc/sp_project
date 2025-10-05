@@ -5,3 +5,4 @@ Pillow
 tqdm
 matplotlib
 scikit-image
+scikit-learn
